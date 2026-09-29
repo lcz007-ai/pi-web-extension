@@ -1,22 +1,25 @@
 {
-  "name": "pi-macos-tools",
+  "name": "@lcz007-ai/pi-macos-tools",
   "version": "0.1.0",
-  "description": "Pi extension: macOS developer-environment doctor, shell detection, and tool discovery.",
+  "description": "Pi extension: read-only macOS developer-environment doctor — tools, Xcode, TCC permissions, Pi extensions & skills",
   "type": "module",
   "license": "MIT",
   "keywords": [
     "pi-package",
     "pi-extension",
+    "pi",
     "macos",
     "doctor",
-    "developer-tools",
     "xcode",
-    "homebrew"
+    "homebrew",
+    "tcc",
+    "permissions"
   ],
   "files": [
     "extensions/",
     "skills/",
-    "README.md"
+    "README.md",
+    "tsconfig.json"
   ],
   "pi": {
     "extensions": [
@@ -37,5 +40,14 @@
     "@sinclair/typebox": "^0.34.41",
     "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcz007-ai/pi-web-extension.git",
+    "directory": "packages/pi-macos-tools"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "glm-quota",
+  "name": "@lcz007-ai/glm-quota",
   "version": "0.1.0",
   "description": "pi 扩展：实时显示 GLM Coding Plan 余量（5h/周窗口、百分比、重置倒计时）",
   "type": "module",
@@ -10,6 +10,8 @@
     "pi-extension",
     "pi",
     "glm",
+    "zhipu",
+    "coding-plan",
     "quota"
   ],
   "files": [
@@ -26,7 +28,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lcz007-ai/pi-web-extension",
+    "url": "git+https://github.com/lcz007-ai/pi-web-extension.git",
     "directory": "packages/glm-quota"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

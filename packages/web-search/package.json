@@ -1,5 +1,5 @@
 {
-  "name": "web-search",
+  "name": "@lcz007-ai/web-search",
   "version": "0.1.0",
   "description": "pi 扩展：联网搜索，Firecrawl 主通道 + Tavily 自动兜底",
   "type": "module",
@@ -11,7 +11,8 @@
     "pi",
     "web-search",
     "firecrawl",
-    "tavily"
+    "tavily",
+    "search"
   ],
   "files": [
     "web-search.ts",
@@ -23,11 +24,16 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lcz007-ai/pi-web-extension",
+    "url": "git+https://github.com/lcz007-ai/pi-web-extension.git",
     "directory": "packages/web-search"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }
