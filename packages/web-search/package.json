@@ -1,0 +1,33 @@
+{
+  "name": "web-search",
+  "version": "0.1.0",
+  "description": "pi 扩展：联网搜索，Firecrawl 主通道 + Tavily 自动兜底",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "web-search",
+    "firecrawl",
+    "tavily"
+  ],
+  "files": [
+    "web-search.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./web-search.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lcz007-ai/pi-web-extension",
+    "directory": "packages/web-search"
+  }
+}

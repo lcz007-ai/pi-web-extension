@@ -1,0 +1,28 @@
+{
+  "name": "pi-web-extension",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo for lcz007-ai pi extension packages.",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "pi": {
+    "extensions": [
+      "./packages/glm-quota/glm-quota.ts",
+      "./packages/web-search/web-search.ts",
+      "./packages/model-switch/model-switch.ts",
+      "./packages/loop-guard/loop-guard.ts",
+      "./packages/egress-guard/z-egress-guard.ts",
+      "./packages/pi-macos-tools/extensions/index.ts"
+    ],
+    "skills": [
+      "./packages/pi-macos-tools/skills"
+    ]
+  },
+  "scripts": {
+    "dev": "npm install && PI_CODING_AGENT_DIR=.pi/agent pi",
+    "build": "npm --workspaces --if-present run build",
+    "typecheck": "npm --workspaces --if-present run typecheck"
+  }
+}

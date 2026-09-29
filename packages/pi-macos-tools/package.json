@@ -1,0 +1,41 @@
+{
+  "name": "pi-macos-tools",
+  "version": "0.1.0",
+  "description": "Pi extension: macOS developer-environment doctor, shell detection, and tool discovery.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "macos",
+    "doctor",
+    "developer-tools",
+    "xcode",
+    "homebrew"
+  ],
+  "files": [
+    "extensions/",
+    "skills/",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.41",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

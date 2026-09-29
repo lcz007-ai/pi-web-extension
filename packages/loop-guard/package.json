@@ -1,0 +1,32 @@
+{
+  "name": "loop-guard",
+  "version": "0.1.0",
+  "description": "pi 扩展：死循环防护，四层防御 + summarize 优雅降级",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "loop",
+    "guard"
+  ],
+  "files": [
+    "loop-guard.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./loop-guard.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lcz007-ai/pi-web-extension",
+    "directory": "packages/loop-guard"
+  }
+}

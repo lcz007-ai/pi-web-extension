@@ -1,0 +1,33 @@
+{
+  "name": "egress-guard",
+  "version": "0.1.0",
+  "description": "pi 扩展：出站密钥防护，拦截敏感文件读取 + 结果/出站 payload 脱敏",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "egress",
+    "security",
+    "redaction"
+  ],
+  "files": [
+    "z-egress-guard.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./z-egress-guard.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lcz007-ai/pi-web-extension",
+    "directory": "packages/egress-guard"
+  }
+}

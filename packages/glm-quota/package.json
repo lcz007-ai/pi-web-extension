@@ -1,0 +1,32 @@
+{
+  "name": "glm-quota",
+  "version": "0.1.0",
+  "description": "pi 扩展：实时显示 GLM Coding Plan 余量（5h/周窗口、百分比、重置倒计时）",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "glm",
+    "quota"
+  ],
+  "files": [
+    "glm-quota.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./glm-quota.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lcz007-ai/pi-web-extension",
+    "directory": "packages/glm-quota"
+  }
+}
