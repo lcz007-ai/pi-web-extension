@@ -1,7 +1,7 @@
 {
   "name": "@lcz007-ai/egress-guard",
-  "version": "0.1.0",
-  "description": "pi 扩展：出站密钥防护，拦截敏感文件读取 + 结果/出站 payload 脱敏",
+  "version": "0.2.0",
+  "description": "pi 扩展：控制什么内容进模型 —— 敏感路径拦截 + 结果/出站/会话日志四层脱敏，daily/strict 两档预设可切换",
   "type": "module",
   "license": "MIT",
   "private": false,
@@ -12,7 +12,8 @@
     "egress",
     "secrets",
     "redaction",
-    "safety"
+    "safety",
+    "privacy"
   ],
   "files": [
     "z-egress-guard.ts",
