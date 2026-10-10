@@ -11,6 +11,7 @@
     "extensions": [
       "./packages/glm-quota/glm-quota.ts",
       "./packages/web-search/web-search.ts",
+      "./packages/auto-router/auto-router.ts",
       "./packages/model-switch/model-switch.ts",
       "./packages/loop-guard/loop-guard.ts",
       "./packages/egress-guard/z-egress-guard.ts",
