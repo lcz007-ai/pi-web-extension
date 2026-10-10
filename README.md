@@ -3,8 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev)
 
 Independently installable [Pi Coding Agent](https://pi.dev) extensions for live GLM quota display, web
-search, automatic model routing, model switching, loop protection, egress secret guarding, and macOS
-developer-environment diagnostics.
+search, automatic model routing, model switching, loop protection, egress secret guarding, model-list
+sync, per-session artifact folders, Gemini malformed-response retry, and macOS developer-environment
+diagnostics.
 
 Install only what you need. Every extension is published to npm under the `@lcz007-ai` scope, so pi.dev lists them automatically.
 
@@ -35,6 +36,9 @@ pi install git:github.com/lcz007-ai/pi-web-extension
 | [`auto-router`](./packages/auto-router) | pi 扩展：按任务复杂度自动路由模型（缓存税感知：组内调 thinking、升级从严、嵌套委托） | `pi install npm:@lcz007-ai/auto-router` |
 | [`loop-guard`](./packages/loop-guard) | pi 扩展：死循环防护，四层防御 + summarize 优雅降级 | `pi install npm:@lcz007-ai/loop-guard` |
 | [`egress-guard`](./packages/egress-guard) | pi 扩展：控制什么内容进模型 —— 敏感路径拦截 + 结果/出站/会话日志脱敏，两档预设可切换 | `pi install npm:@lcz007-ai/egress-guard` |
+| [`models-sync`](./packages/models-sync) | pi 扩展：为 models.json 裸条目补元数据（内置表 + models.dev），维护 settings.json 的 enabledModels | `pi install npm:@lcz007-ai/models-sync` |
+| [`session-artifacts`](./packages/session-artifacts) | pi 扩展：为每个会话在 pi-document 下维护以会话标题命名的产物目录 | `pi install npm:@lcz007-ai/session-artifacts` |
+| [`gemini-malformed-retry`](./packages/gemini-malformed-retry) | pi 扩展：未知 finish reason（如 MALFORMED_RESPONSE）自动延时重发 | `pi install npm:@lcz007-ai/gemini-malformed-retry` |
 | [`pi-macos-tools`](./packages/pi-macos-tools) | macOS 开发环境体检 doctor：系统/工具链/TCC 权限/Pi 扩展与技能巡检（只读） | `pi install npm:@lcz007-ai/pi-macos-tools` |
 
 ## 🔧 Advanced installation

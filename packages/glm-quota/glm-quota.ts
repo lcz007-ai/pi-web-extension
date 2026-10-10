@@ -2,7 +2,12 @@
  * GLM Coding Plan 余量显示（pi 扩展）
  *
  * 每次打开新对话时，在输入框（发送键）正上方显示一行 Coding Plan 余量：
- *   5 小时窗口 / 周窗口的剩余额度、已用百分比、重置倒计时。
+ *   5 小时窗口 / 周窗口的剩余额度百分比、剩余/总额、重置倒计时。
+ *
+ * 口径说明（与官方 docs.bigmodel.cn/cn/coding-plan/overview 一致）：
+ *   套餐同时设「每 5 小时」与「每周」积分上限（Lite：2000 / 10000）。
+ *   接口 percentage = 已用积分占比；remaining/usage = 剩余/总额积分。
+ *   5 小时为滚动窗口（消耗后 5h 重置），周窗口按下单时间 7 天固定周期，两者互不可比。
  *
  * 数据接口：GET {host}/api/monitor/usage/quota/limit
  *   注意：智谱该接口要求 Authorization 头直接传 key（不带 "Bearer " 前缀）。
@@ -60,6 +65,8 @@ interface GlmUsage {
 	level?: string;
 	fiveHour?: GlmTier;
 	weekly?: GlmTier;
+	/** 原始桶摘要（type/unit/已用%/已用/总额/余量），供 /glm-quota 核对 */
+	raw?: string;
 	error?: string;
 }
 
@@ -156,19 +163,27 @@ async function queryUsage(cred: GlmCredential): Promise<GlmUsage> {
 			resetMs: Number(it.nextResetTime) > 0 ? Number(it.nextResetTime) : undefined,
 		};
 	};
+	const raw = limits
+		.map(
+			(l) =>
+				`${l.type} unit=${l.unit} 已用 ${l.percentage}% (${l.currentValue}/${l.usage}，余 ${l.remaining})`,
+		)
+		.join("\n");
 	return {
 		level: body.data?.level,
 		fiveHour: tier(3),
 		weekly: tier(6),
+		raw,
 	};
 }
 
 // ── 格式化 ──────────────────────────────────────────────────────────
 
-function colorForPct(pct: number, text: string): string {
-	if (pct >= 90) return `${C.red}${text}${C.reset}`;
-	if (pct >= 70) return `${C.orange}${text}${C.reset}`;
-	if (pct < 30) return `${C.green}${text}${C.reset}`;
+// 按「剩余」上色：余量越少越告警
+function colorForRemaining(leftPct: number, text: string): string {
+	if (leftPct < 10) return `${C.red}${text}${C.reset}`;
+	if (leftPct < 30) return `${C.orange}${text}${C.reset}`;
+	if (leftPct >= 70) return `${C.green}${text}${C.reset}`;
 	return text;
 }
 
@@ -188,15 +203,16 @@ const fmtNum = (n: number): string => n.toLocaleString("en-US");
 function fmtTier(label: string, t: GlmTier | undefined): string {
 	if (!t) return "";
 	const parts: string[] = [];
+	let leftPct = 100;
+	// 以「余量 %」为主展示（与官方「用量统计」的「已使用 %」互补，避免混读）
 	if (t.remaining !== undefined && t.total !== undefined && t.total > 0) {
-		parts.push(`余 ${fmtNum(t.remaining)}/${fmtNum(t.total)}`);
+		leftPct = Math.round((t.remaining / t.total) * 100);
+		parts.push(`余 ${leftPct}% (${fmtNum(t.remaining)}/${fmtNum(t.total)})`);
 	}
-	if (t.usedPct !== undefined) parts.push(`已用 ${t.usedPct.toFixed(0)}%`);
 	const countdown = fmtCountdown(t.resetMs);
 	if (countdown) parts.push(countdown);
 	if (parts.length === 0) return "";
-	const body = colorForPct(t.usedPct ?? 0, `${label}: ${parts.join(" · ")}`);
-	return body;
+	return colorForRemaining(leftPct, `${label}: ${parts.join(" · ")}`);
 }
 
 function fmtWidgetLine(u: GlmUsage): string {
@@ -220,23 +236,44 @@ export default function glmQuotaExtension(pi: ExtensionAPI): void {
 	let booted = false;
 	let credential: GlmCredential | null = null;
 	let lastCtx: CtxLike | null = null;
+	let lastRaw = "";
 
 	const render = (ctx: CtxLike, line: string): void => {
 		if (!ctx.hasUI) return;
 		ctx.ui?.setWidget?.(WIDGET_KEY, [line]);
 	};
 
+	const stopTimer = (): void => {
+		if (timer) {
+			clearInterval(timer);
+			timer = null;
+		}
+	};
+
 	const refresh = async (ctx: CtxLike): Promise<void> => {
-		render(ctx, `${C.dim}GLM Coding Plan 余量: 查询中…${C.reset}`);
-		if (!credential) {
-			credential = await resolveCredential(ctx);
+		try {
+			render(ctx, `${C.dim}GLM Coding Plan 余量: 查询中…${C.reset}`);
 			if (!credential) {
-				render(ctx, `${C.dim}GLM Coding Plan 余量: 未找到智谱 API 密钥${C.reset}`);
+				credential = await resolveCredential(ctx);
+				if (!credential) {
+					render(ctx, `${C.dim}GLM Coding Plan 余量: 未找到智谱 API 密钥${C.reset}`);
+					return;
+				}
+			}
+			const usage = await queryUsage(credential);
+			lastRaw = usage.raw ?? usage.error ?? "";
+			render(ctx, fmtWidgetLine(usage));
+		} catch (error) {
+			// 会话被替换/重载后旧 ctx 会判定为 stale（assertActive 抛错）。
+			// 此时停止定时器，等下次 session_start 用新 ctx 重新 bootstrap，避免未捕获异常崩溃。
+			const message = error instanceof Error ? error.message : String(error);
+			if (message.includes("stale")) {
+				stopTimer();
 				return;
 			}
+			// 其他错误（如网络失败）不渲染错误行，避免旧 ctx 再触发问题；仅记录
+			console.warn(`[glm-quota] 刷新失败: ${message}`);
 		}
-		const usage = await queryUsage(credential);
-		render(ctx, fmtWidgetLine(usage));
 	};
 
 	const bootstrap = (ctx: CtxLike): void => {
@@ -245,6 +282,7 @@ export default function glmQuotaExtension(pi: ExtensionAPI): void {
 		booted = true;
 		void refresh(ctx);
 		if (REFRESH_INTERVAL_MS > 0) {
+			stopTimer();
 			timer = setInterval(() => {
 				if (lastCtx) void refresh(lastCtx);
 			}, REFRESH_INTERVAL_MS);
@@ -256,20 +294,23 @@ export default function glmQuotaExtension(pi: ExtensionAPI): void {
 	// 兜底：热重载后首条消息点亮 widget（幂等，不会重复启动定时器）
 	pi.on("agent_start", (_event, ctx) => bootstrap(ctx as unknown as CtxLike));
 
-	// 手动刷新命令
+	// 手动刷新命令（附带原始桶数据，便于与官方页面核对）
 	pi.registerCommand("glm-quota", {
 		description: "刷新 GLM Coding Plan 余量显示",
 		handler: async (_args, ctx) => {
 			credential = null; // 强制重新解析密钥
 			await refresh(ctx as unknown as CtxLike);
+			ctx.ui.notify(
+				lastRaw
+					? `GLM 原始配额桶（percentage = 已用积分占比）：\n${lastRaw}`
+					: "GLM 余量查询无数据",
+				"info",
+			);
 		},
 	});
 
 	pi.on("session_shutdown", () => {
-		if (timer) {
-			clearInterval(timer);
-			timer = null;
-		}
+		stopTimer();
 		booted = false;
 		lastCtx = null;
 	});

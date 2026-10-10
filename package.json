@@ -15,7 +15,10 @@
       "./packages/model-switch/model-switch.ts",
       "./packages/loop-guard/loop-guard.ts",
       "./packages/egress-guard/z-egress-guard.ts",
-      "./packages/pi-macos-tools/extensions/index.ts"
+      "./packages/pi-macos-tools/extensions/index.ts",
+      "./packages/models-sync/models-sync.ts",
+      "./packages/session-artifacts/session-artifacts.ts",
+      "./packages/gemini-malformed-retry/gemini-malformed-retry.ts"
     ],
     "skills": [
       "./packages/pi-macos-tools/skills"

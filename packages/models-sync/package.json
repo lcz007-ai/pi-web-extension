@@ -1,0 +1,38 @@
+{
+  "name": "@lcz007-ai/models-sync",
+  "version": "0.1.0",
+  "description": "pi 扩展：为 models.json 裸条目补元数据（内置表 + models.dev），并维护 settings.json 的 enabledModels",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "models",
+    "sync",
+    "models.dev",
+    "enabledModels"
+  ],
+  "files": [
+    "models-sync.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./models-sync.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcz007-ai/pi-web-extension.git",
+    "directory": "packages/models-sync"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

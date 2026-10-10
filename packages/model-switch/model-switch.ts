@@ -9,20 +9,21 @@
  *     reason   可选，记录切换原因（仅用于提示与回显）
  *
  * 语义别名（供 AGENTS.md 的模型选择策略使用，按需改这里）：
- *   planning / plan / high  → <your-high-end-model>  （规划、设计、复杂判断）
- *   execute / exec / fast   → <your-fast-model>      （开发、编码、部署落地）
- *
- * ⚠️ 占位符必须替换为你自己的 provider/id（如 "vendor/model-x"），
- *    未替换时按别名切换会报「找不到模型」，属预期行为。
+ *   planning / plan / high  → <your-provider>/<your-high-end-model>        （规划、设计、复杂判断）
+ *   execute / exec / fast   → <your-provider>/<your-fast-model>  （开发、编码、部署落地）
+ *   ds-flash                → <your-fallback-provider>/<your-fallback-model>
  *
  * 行为边界：
  *   - 等价于 /model：只改当前会话，不写 settings.json 的 defaultModel
  *   - 同 provider 切换：立即生效，本轮的后续调用由新模型执行
  *   - 跨 provider 切换：目标模型未标 reasoning:true 时排定到本轮结束后生效。pi 在跨模型时会剥离
  *     reasoning_content，而部分端点（实测 DeepSeek）强制要求回传，同一轮内切会直接 400；
- *     同 provider 端点一般宽容接受；目标标了 reasoning:true 时 pi 会以空占位回传（实测可通过），
+ *     同 provider（如 glm 系）端点宽容接受；目标标了 reasoning:true 时 pi 会以空占位回传（实测可通过），
  *     同样允许同轮生效。排定后若再切回当前模型，视为取消排定
  *   - 目标 provider 未配置凭据时拒绝切换，工具报错并保留原模型
+ *   - 缓存重计费警告：从 prompt cache 仍热的模型切走时（手动 /model、Ctrl+P、本工具、排定落定均覆盖），
+ *     若上下文 ≥20k tokens 或重计费 ≥$0.10，在状态栏提示下一条请求将在新模型上全量重计费，
+ *     下一条请求发出后自动消失（实现思路移植自 pi-model-switch）
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -33,21 +34,25 @@ import { Type } from "typebox";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type Level = (typeof THINKING_LEVELS)[number];
 
-/**
- * 语义别名：小写键名 → 目标模型（provider/id）与预设思考等级。
+/** 语义别名：小写键名 → 目标模型（provider/id）与预设思考等级
  *
- * ⚠️ 使用前必须把下面的占位符替换为你在 pi 中配置好的真实模型
- *    （provider/id 形式，如 "vendor/model-x"）。
- *    别名键名可自由增删改，供 AGENTS.md 的模型选择策略引用。
+ * v3 路由（2026-10-06）：GLM 三模型走 Coding Plan 套餐（积分制，边际≈0），
+ * DeepSeek 按量计费（真钱）仅作特例出口。难度调节优先 effort/thinking（零缓存代价），
+ * 模型切换只在阶段边界发生（切换税 = 全上下文按 cache-miss 重算）。
  */
 const ALIASES: Record<string, { target: string; thinking?: Level }> = {
-	planning: { target: "<your-high-end-model>", thinking: "high" },
-	plan: { target: "<your-high-end-model>", thinking: "high" },
-	high: { target: "<your-high-end-model>", thinking: "high" },
-	execute: { target: "<your-fast-model>", thinking: "low" },
-	exec: { target: "<your-fast-model>", thinking: "low" },
-	fast: { target: "<your-fast-model>", thinking: "low" },
-	flash: { target: "<your-fast-model>", thinking: "low" },
+	// 主路由（套餐内）
+	planning: { target: "<your-provider>/<your-high-end-model>", thinking: "high" },      // 复杂：规划/架构/疑难分析
+	plan: { target: "<your-provider>/<your-high-end-model>", thinking: "high" },
+	execute: { target: "<your-provider>/<your-fast-model>", thinking: "low" },  // 简单：编码/部署/批量/短问答
+	exec: { target: "<your-provider>/<your-fast-model>", thinking: "low" },
+	fast: { target: "<your-provider>/<your-fast-model>", thinking: "low" },
+	simple: { target: "<your-provider>/<your-fast-model>", thinking: "low" },
+	hard: { target: "<your-provider>/<your-fast-model>", thinking: "max" },     // 同模型内升难度（零缓存税）
+	vision: { target: "<your-provider>/<your-fast-model>" },                    // 视觉（5.3-flash 常开；若启用 4.6v 后可改指 zai-coding-cn/<your-vision-model>，指向禁用模型会触发自检报警）
+	// 特例出口（按量真钱）
+	"ds-flash": { target: "<your-fallback-provider>/<your-fallback-model>", thinking: "off" },   // 点名/配额溢出/超长上下文
+	"ds-pro": { target: "<your-fallback-provider>/<your-reasoning-model>", thinking: "high" },   // <20k 上下文硬推理
 };
 
 type Pending = {
@@ -148,13 +153,127 @@ function listText(ctx: ExtensionContext, level: string, pending?: Pending | null
 	for (const model of all) {
 		const mark = current && label(model) === currentLabel ? "*" : " ";
 		const extra = model.reasoning ? "" : " [非推理]";
-		lines.push(`${mark} ${display(model)}${extra}`);
+		lines.push(`${mark} ${display(model)}${priceText(model)}${extra}`);
+	}
+	const { count, estUsd } = switchStats(ctx);
+	if (count > 0) {
+		lines.push("");
+		lines.push(`本会话已切换 ${count} 次 · 估算全量重算累计 ~$${estUsd.toFixed(2)}（按固定单价，不分峰谷）`);
 	}
 	return lines.join("\n");
 }
 
 function reasonSuffix(reason: string | undefined): string {
 	return reason && reason.trim() ? `，原因：${reason.trim()}` : "";
+}
+
+const CACHE_STATUS_KEY = "[REDACTED]";
+
+/** 模型 promptCache 元数据的 TTL（秒，short/long 档），缺省 300s；PI_CACHE_RETENTION=long 时用长档
+ *  DeepSeek 官方口径为「闲置几小时到几天」自动清空（实测闲置 44 分钟仍可命中），
+ *  300s 会漏报重计费警告，故按 provider 覆盖。 */
+const TTL_OVERRIDE_S: Record<string, number> = { deepseek: 3 * 3600 };
+
+function cacheTtlMs(model: Model<any>): number {
+	if (TTL_OVERRIDE_S[model.provider]) return TTL_OVERRIDE_S[model.provider] * 1000;
+	const retention: "short" | "long" = process.env.PI_CACHE_RETENTION === "long" ? "long" : "short";
+	return (model.promptCache?.[retention] ?? 300) * 1000;
+}
+
+/**
+ * 缓存重计费估算：从 prompt cache 仍热的 from 切到缓存已冷的 to 时，下一条请求会在 to 上
+ * 全量重算整个上下文（按缓存写入价或输入价计费）。阈值与 pi 自带的
+ * "Cache miss after model switch" 提示一致：≥20k tokens 或 ≥$0.10。
+ */
+function cacheSwitchWarning(ctx: ExtensionContext, from: Model<any>, to: Model<any>): string | undefined {
+	// 各模型在当前分支上最后一次带缓存活动的请求时间
+	const lastRequestAt = new Map<string, number>();
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type === "compaction" || entry.type === "branch_summary") {
+			// 压缩/分支摘要重建上下文，之前的缓存全部失效
+			lastRequestAt.clear();
+		} else if (entry.type === "message" && entry.message.role === "assistant") {
+			// 从不报告缓存活动的 provider 没有可损失的缓存
+			if (entry.message.usage.cacheRead + entry.message.usage.cacheWrite === 0) continue;
+			lastRequestAt.set(`${entry.message.provider}/${entry.message.model}`, entry.message.timestamp);
+		} else if (entry.type === "usage" && entry.kind === "cache_warm") {
+			// pi 的 cache warmer 主动刷新也会给缓存续命
+			lastRequestAt.set(`${entry.provider}/${entry.model}`, Date.parse(entry.timestamp));
+		}
+	}
+
+	const now = Date.now();
+	const isWarm = (model: Model<any>) =>
+		now - (lastRequestAt.get(`${model.provider}/${model.id}`) ?? -Infinity) < cacheTtlMs(model);
+	// from 缓存已冷（无可损失）或 to 缓存仍热（已有缓存可廉价复用）时不算重计费
+	if (!isWarm(from) || isWarm(to)) return undefined;
+
+	const tokens = ctx.getContextUsage()?.tokens;
+	if (!tokens) return undefined;
+
+	const paidRate = to.cost.cacheWrite || to.cost.input;
+	const cost = (tokens * Math.max(0, paidRate - to.cost.cacheRead)) / 1_000_000;
+	if (tokens < 20_000 && cost < 0.1) return undefined;
+
+	const costText = cost >= 0.01 ? `（约 $${cost.toFixed(2)}）` : "";
+	return `下一条请求将在 ${label(to)} 上全量重计费 ~${Math.round(tokens / 1000)}k tokens${costText}`;
+}
+
+/** 套餐 provider：cost 仅为记账口径，实际走 Coding Plan 积分（边际现金≈0） */
+const PLAN_PROVIDERS = new Set(["zai-coding-cn"]);
+
+function priceText(model: Model<any>): string {
+	const plan = PLAN_PROVIDERS.has(model.provider) ? " · 套餐" : " · 按量";
+	const c = model.cost;
+	return c ? ` [miss $${c.input}/M · hit $${c.cacheRead}/M · out $${c.output}/M${plan}]` : `${plan} [无价格数据]`;
+}
+
+/** 会话切换统计：模型变化次数 + 切换后首条 miss 输入的重算成本（USD，按 registry 单价） */
+function switchStats(ctx: ExtensionContext): { count: number; estUsd: number } {
+	const prices = new Map<string, number>();
+	for (const m of ctx.modelRegistry.getAvailable()) prices.set(`${m.provider}/${m.id}`, m.cost?.input ?? 0);
+	let prev = "";
+	let count = 0;
+	let estUsd = 0;
+	let billNext = false;
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		const key = `${entry.message.provider}/${entry.message.model}`;
+		if (!key.includes("/")) continue;
+		if (prev && key !== prev) {
+			count++;
+			billNext = true;
+		}
+		if (billNext) {
+			estUsd += ((entry.message.usage?.input ?? 0) * (prices.get(key) ?? 0)) / 1_000_000;
+			billNext = false;
+		}
+		prev = key;
+	}
+	return { count, estUsd };
+}
+
+function statsText(ctx: ExtensionContext): string {
+	const { count, estUsd } = switchStats(ctx);
+	return count > 0 ? `\n本会话已切换 ${count} 次 · 估算全量重算累计 ~$${estUsd.toFixed(2)}（按固定单价，不分峰谷）` : "";
+}
+
+/** 往返检测：目标模型是刚切离且驻留 <2 轮的上一个部落时提示（扫 branch，会话恢复/rewind 不失真） */
+function roundTripWarning(ctx: ExtensionContext, targetLabel: string): string | undefined {
+	const runs: { key: string; len: number }[] = [];
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		const key = `${entry.message.provider}/${entry.message.model}`;
+		if (!key.includes("/")) continue;
+		if (runs.length && runs[runs.length - 1].key === key) runs[runs.length - 1].len++;
+		else runs.push({ key, len: 1 });
+	}
+	runs.pop(); // 最后一段是当前模型自己的驻留段
+	const prevRun = runs[runs.length - 1];
+	if (prevRun && prevRun.key === targetLabel && prevRun.len < 2) {
+		return `刚从 ${targetLabel} 切离仅 ${prevRun.len} 轮，本次切回是该模型的第 2 次全量重算，请确认切换必要。`;
+	}
+	return undefined;
 }
 
 const STATUS_KEY = "model-switch";
@@ -209,14 +328,45 @@ export default function (pi: ExtensionAPI) {
 		await applyPending(ctx, "本轮结束");
 	});
 
-	// 会话被替换/重开后，旧的排定切换不再有意义
+	// 会话被替换/重开后，旧的排定切换不再有意义；顺带做别名健康自检（防止 provider 改名导致静默失效）
 	pi.on("session_start", async (_event, ctx) => {
 		pending = null;
 		ctx.ui.setStatus(STATUS_KEY, "");
+		ctx.ui.setStatus(CACHE_STATUS_KEY, "");
+		try {
+			const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+			// 复刻 pi 的 getSupportedThinkingLevels：map 中非 null 键（xhigh/max 需显式映射）
+			const ok = (m: Model<any>, l: Level): boolean => {
+				if (!m.reasoning) return false;
+				const v = m.thinkingLevelMap?.[l];
+				return v !== null && (l === "xhigh" || l === "max" ? v !== undefined : true);
+			};
+			for (const [name, alias] of Object.entries(ALIASES)) {
+				const resolved = matchModel(ctx, alias.target);
+				if (resolved.kind !== "ok") {
+					ctx.ui.notify(`model-switch：别名 "${name}" → ${alias.target} 无法解析（provider 改名或模型下线？）`, "error");
+					continue;
+				}
+				// 档位预设校验（2026-10-06 方案A 补齐）：非法档位会被 pi 静默 clamp，路由意图静默走样
+				if (alias.thinking && !ok(resolved.model, alias.thinking)) {
+					const legal = LEVELS.filter((l) => ok(resolved.model, l as Level));
+					ctx.ui.notify(`model-switch：别名 "${name}" 预设 thinking:${alias.thinking} 不在 ${label(resolved.model)} 合法档位 [${legal.join("/")}]，将被静默 clamp`, "error");
+				}
+			}
+		} catch {
+			// registry 未就绪时跳过自检，不影响会话启动
+		}
 	});
 
-	// 用户手动 /model 切换后，排定不再有意义（含切到与排定相同目标的情况：目标已就位，无需再排定）
+	// 模型切换生效（手动 /model、Ctrl+P、本工具、排定落定均走这里）：展示缓存重计费警告。
+	// 会话恢复（source=restore）不算切换；previousModel 缺失或与目标同名时无从谈起
 	pi.on("model_select", async (event, ctx) => {
+		if (event.source !== "restore" && event.previousModel && label(event.previousModel) !== label(event.model)) {
+			const warning = cacheSwitchWarning(ctx, event.previousModel, event.model);
+			ctx.ui.setStatus(CACHE_STATUS_KEY, warning ? `⚠ ${warning}` : "");
+		}
+
+		// 用户手动 /model 切换后，排定不再有意义（含切到与排定相同目标的情况：目标已就位，无需再排定）
 		if (!pending) return;
 		const sameTarget = label(pending.model) === label(event.model);
 		pending = null;
@@ -224,16 +374,22 @@ export default function (pi: ExtensionAPI) {
 		if (!sameTarget) ctx.ui.notify("检测到手动切换模型，已丢弃之前的排定切换", "info");
 	});
 
+	// 新请求已发出：重计费已成事实，警告随之消失
+	pi.on("turn_start", async (_event, ctx) => {
+		ctx.ui.setStatus(CACHE_STATUS_KEY, "");
+	});
+
 	pi.registerTool({
 		name: "switch_model",
 		label: "Switch Model",
 		description:
-			"查看或切换当前会话使用的模型。设计/规划类任务切到高阶模型，开发/部署类任务切到低阶快速模型，也可用 provider/id 或关键字精确指定。",
-		promptSnippet: "查看或切换当前会话模型（支持 planning / execute 等语义别名）",
+			"查看或切换当前会话模型与思考等级。路由原则：难度优先用 thinking/effort 调节（零缓存代价）；换模型只在阶段边界发生（切换 = 全上下文按 cache-miss 价重算）。GLM 系走套餐，DeepSeek 按量付费（特例出口）。",
+		promptSnippet: "查看或切换当前会话模型（语义别名：planning / execute / hard / vision / ds-flash / ds-pro）",
 		promptGuidelines: [
-			"Use switch_model before starting design, planning, architecture, or other complex judgment work: call it with model=\"planning\".",
-			"Use switch_model before starting implementation, coding, or deployment work: call it with model=\"execute\".",
-			"Use switch_model with action=\"list\" when you need to know the current model or which models are available.",
+			"模型路由（阶段级，低频）：默认 execute（<your-fast-model>，套餐）；规划/架构/疑难分析用 planning（<your-high-end-model>，套餐）；视觉输入用 vision（<your-vision-model>，套餐）。只在阶段边界切换，阶段内不换模型；拿不准算复杂、拿不准留在当前模型；复杂度只在阶段开始判断一次，中途不降级。",
+			"难度调节优先用 thinking/effort 而非换模型（effort 切换不损失缓存）：机械任务 low、常规任务默认、卡壳时临时升 high/max（别名 hard = flash+max）。同一模型连续 2 次尝试失败才考虑升级模型。",
+			"DeepSeek 为按量付费特例出口（全量重算 ¥1~9/M、输出 ¥8~27/M，CNY 分时计费）：仅当用户点名、GLM 周配额余量 <20%（/glm-quota 查看）、或 <20k 上下文硬推理难题（ds-pro）时使用。短上下文（<10k）切换代价可忽略，可灵活。",
+			"Use switch_model with action=\"list\" to see the current model, aliases, per-model prices, and session switch stats.",
 		],
 		parameters: Type.Object({
 			action: Type.Optional(
@@ -244,7 +400,7 @@ export default function (pi: ExtensionAPI) {
 			model: Type.Optional(
 				Type.String({
 					description:
-						'目标模型：语义别名（planning / execute / fast）、provider/id（如 vendor/model-x）、裸 id 或唯一关键字',
+						'目标模型：语义别名（planning / execute / fast）、provider/id（如 <your-provider>/<your-fast-model>）、裸 id 或唯一关键字',
 				}),
 			),
 			thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "切换后的思考等级，缺省用别名的预设值" })),
@@ -312,6 +468,8 @@ export default function (pi: ExtensionAPI) {
 			const level = (params.thinking as Level | undefined) ?? scopedPin ?? matched.alias?.thinking;
 			const from = current ? label(current) : "(未知)";
 			const via = matched.via.startsWith("alias:") ? `（别名 ${matched.via.slice(6)}）` : "";
+			const rtWarn = roundTripWarning(ctx, targetLabel);
+			const stats = statsText(ctx);
 
 			if (current && label(current) === targetLabel) {
 				// 切回当前模型 = 明确取消之前未生效的排定（否则本轮结束仍会切走，违背最后一次指令）
@@ -373,6 +531,7 @@ export default function (pi: ExtensionAPI) {
 			const crossProvider = Boolean(current && current.provider !== target.provider);
 			const sameTurnSafe = !crossProvider || target.reasoning === true;
 			if (!sameTurnSafe && !ctx.isIdle()) {
+				const cacheWarning = current ? cacheSwitchWarning(ctx, current, target) : undefined;
 				pending = {
 					model: target,
 					level,
@@ -387,7 +546,7 @@ export default function (pi: ExtensionAPI) {
 					content: [
 						{
 							type: "text" as const,
-							text: `已排定切换（跨 provider）：${from} → ${targetLabel}${via}${reasonSuffix(params.reason)}。\n本轮（含剩余工具调用与收尾）仍由 ${from} 完成，本轮结束后自动生效，无需重复调用本工具。`,
+							text: `已排定切换（跨 provider）：${from} → ${targetLabel}${via}${reasonSuffix(params.reason)}。\n本轮（含剩余工具调用与收尾）仍由 ${from} 完成，本轮结束后自动生效，无需重复调用本工具。${cacheWarning ? `\n⚠ 排定落定后${cacheWarning}。` : ""}${rtWarn ? `\n⚠ ${rtWarn}` : ""}${stats}`,
 						},
 					],
 					details: { from, to: targetLabel, thinking: level, via: matched.via, pending: true, crossProvider: true },
@@ -396,6 +555,7 @@ export default function (pi: ExtensionAPI) {
 
 			// isIdle 兜底：agent 运行中调用本工具时恒为非 idle（走上面的排定分支）；
 			// 若被其他扩展/命令在空闲期调用，跨 provider 也直接切换更符合直觉
+			const cacheWarning = current ? cacheSwitchWarning(ctx, current, target) : undefined;
 			const ok = await pi.setModel(target).catch(() => false);
 			if (!ok) {
 				return {
@@ -419,10 +579,10 @@ export default function (pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text" as const,
-						text: `已切换模型：${from} → ${targetLabel}${via}，thinking: ${actualLevel}${reasonSuffix(params.reason)}。\n本轮的后续调用已由新模型执行。`,
+						text: `已切换模型：${from} → ${targetLabel}${via}，thinking: ${actualLevel}${reasonSuffix(params.reason)}。\n本轮的后续调用已由新模型执行。${cacheWarning ? `\n⚠ ${cacheWarning}。` : ""}${rtWarn ? `\n⚠ ${rtWarn}` : ""}${stats}`,
 					},
 				],
-				details: { from, to: targetLabel, thinking: actualLevel, via: matched.via, pending: false },
+				details: { from, to: targetLabel, thinking: actualLevel, via: matched.via, pending: false, ...(cacheWarning ? { cacheWarning } : {}), ...(rtWarn ? { roundTrip: rtWarn } : {}) },
 			};
 		},
 	});

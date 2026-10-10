@@ -1,0 +1,37 @@
+{
+  "name": "@lcz007-ai/gemini-malformed-retry",
+  "version": "0.1.0",
+  "description": "pi 扩展：未知 finish reason（如 MALFORMED_RESPONSE）自动延时重发，避免整轮直接失败",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "gemini",
+    "retry",
+    "malformed-response"
+  ],
+  "files": [
+    "gemini-malformed-retry.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./gemini-malformed-retry.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcz007-ai/pi-web-extension.git",
+    "directory": "packages/gemini-malformed-retry"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
