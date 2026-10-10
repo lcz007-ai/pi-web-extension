@@ -3,8 +3,8 @@
  *
  * 设计文档：model-routing-plan.md (v2)
  *
- * 核心：智谱 Coding Plan 积分制下，切换模型的缓存重建税方向不对称——
- * 降级(5.3→flash)税约为升级(flash→5.3)的 1/10。因此策略为：
+ * 核心：订阅积分制下，切换模型的缓存重建税方向不对称——
+ * 降级(高端→快速)税约为升级(快速→高端)的 1/10。因此策略为：
  *   1. 组内调级（L0↔L1 或 L2↔L3）只调 thinking level —— 零缓存税
  *   2. 降级从宽（收尾/新话题积极降级），升级从严（税费闸门）
  *   3. 长上下文升级不切模型，改用嵌套委托（streamSimple/complete 短上下文调用）
@@ -18,31 +18,31 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 // ==================== 配置 ====================
 
-const PROVIDER = "zai-coding-cn";
+const PROVIDER = "<your-provider>";
 
-/** 官方积分抵扣系数（每万 token）。来源 docs.bigmodel.cn/cn/coding-plan/overview */
+/** 官方积分抵扣系数（每万 token）。来源：你的 provider 套餐文档 */
 const COST = {
-  "<your-high-end-model>":       { input: 6.9, cached: 1.7,  output: 24 } as const,
-  "<your-fast-model>": { input: 2.3, cached: 0.56, output: 8  } as const,
+  "<your-high-end-model>": { input: 6.9, cached: 1.7,  output: 24 } as const,
+  "<your-fast-model>":     { input: 2.3, cached: 0.56, output: 8  } as const,
 } as const;
 type RouterModelId = keyof typeof COST;
 
-/** 组：0=flash 组(L0/L1) 1=<your-high-end-model> 组(L2/L3)。跨组切换才需要过税费闸门 */
+/** 组：0=快速模型组(L0/L1) 1=高端模型组(L2/L3)。跨组切换才需要过税费闸门 */
 const GROUP: Record<RouterModelId, 0 | 1> = { "<your-fast-model>": 0, "<your-high-end-model>": 1 };
 
 /** 四档复杂度 → 模型 + thinking
- *  档位对齐端点真实能力（docs.bigmodel.cn/cn/guide/capabilities/thinking，2026-10-06 核对）：
- *  GLM-5.3/FLASH 强制开启思考（thinking disabled 会报错），effort 仅支持 low/high/max。
+ *  档位对齐端点真实能力（你的 provider 的 thinking 文档，2026-10-06 核对）：
+ *  该端点强制开启思考（thinking disabled 会报错），effort 仅支持 low/high/max。
  *  旧设计 L0=off、L2=medium 会被 pi 静默 clamp（off→low、medium→high），导致四档退化两档。 */
 const TIERS = [
-  { model: "<your-fast-model>", thinking: "low"  }, // L0 快问快答（端点最低档）
-  { model: "<your-fast-model>", thinking: "high" }, // L1 常规执行（flash 组内升档，零切换税）
-  { model: "<your-high-end-model>",       thinking: "low"  }, // L2 复杂开发（跨组，轻度推理）
-  { model: "<your-high-end-model>",       thinking: "high" }, // L3 规划评审
+  { model: "<your-fast-model>",     thinking: "low"  }, // L0 快问快答（端点最低档）
+  { model: "<your-fast-model>",     thinking: "high" }, // L1 常规执行（快速模型组内升档，零切换税）
+  { model: "<your-high-end-model>", thinking: "low"  }, // L2 复杂开发（跨组，轻度推理）
+  { model: "<your-high-end-model>", thinking: "high" }, // L3 规划评审
 ] as const;
 
 /** failover 兑底目标（真钱段），与决策表 L331 处保持一致 */
-const FAILOVER_TARGET = { provider: "deepseek", model: "<your-fallback-model>", thinking: "off" } as const;
+const FAILOVER_TARGET = { provider: "<your-fallback-provider>", model: "<your-fallback-model>", thinking: "off" } as const;
 
 // ==================== 自检（一致性校验，2026-10-06 方案A）====================
 // 目标：把“副本与事实源脱钩”从静默退化变成启动即报警。校验的是内部一致性
@@ -105,7 +105,7 @@ const DELEGATE_MODEL: RouterModelId = "<your-high-end-model>";
 
 // ==================== 边界区复核（纠错器，不依赖判级结果）====================
 // 双通道优先级链：配置了 TYPESAFE_API_KEY → Jev（$0.042/M、<300ms、原生置信度）；
-// 否则/失败 → <your-fast-model> 嵌套调用（走 Coding Plan 套餐，1~3s，约0.1积分/次）；
+// 否则/失败 → <your-fast-model> 嵌套调用（走订阅套餐，1~3s，约0.1积分/次）；
 // 都不可用 → 纯启发式。
 // 触发：除“明确 L0 问答”和“收尾确认”外都复核——复核条件绝不能依赖判级结果，
 // 否则判低→不跨组→不复核→永远判低（自锁，已修复过一次）。
@@ -127,7 +127,7 @@ let reviewLastResult: string | null = null; // 供 /router status 展示
 // 链：<your-high-end-model> → <your-fast-model> → <your-fallback-provider>/<your-fallback-model>（真钱，停止线）→ 停止并通知。
 // 连续 FAILOVER_THRESHOLD 次 429/5xx（pi 内置同模型重试后仍失败）才切；
 // 切换不走过税费闸门（可用性优先）；不自动切回；手动切换重置链状态。
-// 注意：套餐内两模型共享积分池，双挂 → 疑似配额耗尽/整体故障 → 进入 deepseek 真钱段。
+// 注意：套餐内两模型共享积分池，双挂 → 疑似配额耗尽/整体故障 → 进入 <your-fallback-provider> 真钱段。
 const FAILOVER_THRESHOLD = 3;
 let failCount = 0;
 let failoverCount = 0;
@@ -389,17 +389,17 @@ export default function (pi: ExtensionAPI) {
 
     const curId = ctx.model ? ctx.model.id : "";
     const curProvider = ctx.model ? ctx.model.provider : "";
-    // 决策表：5.3/套餐非路由表模型→套餐备胎；flash→真钱兑底；已在 deepseek→链尽头
+    // 决策表：套餐内非路由表模型→套餐备胎；快速模型→按量兑底；已在兜底 provider→链尽头
     let target: { provider: string; model: string; thinking: string; warn: boolean };
     if (curId === "<your-fast-model>") {
       target = { provider: FAILOVER_TARGET.provider, model: FAILOVER_TARGET.model, thinking: FAILOVER_TARGET.thinking, warn: true };
-    } else if (curProvider === "deepseek") {
+    } else if (curProvider === "<your-fallback-provider>") {
       failoverNotice = `链尽头：${curId} 连续异常，无更多兑底`;
-      notify(ctx, `⚠ failover 链尽头：deepseek 也连续 ${FAILOVER_THRESHOLD} 次异常，全部兑底失败，请人工介入`, "warning");
+      notify(ctx, `⚠ failover 链尽头：<your-fallback-provider> 也连续 ${FAILOVER_THRESHOLD} 次异常，全部兑底失败，请人工介入`, "warning");
       return;
     } else {
-      // <your-high-end-model>、4.6v、highspeed 等套餐内模型 → 先落套餐备胎 flash（真钱段留给套餐整体故障）
-      target = { provider: "zai-coding-cn", model: "<your-fast-model>", thinking: "low", warn: false };
+      // 套餐内其它模型 → 先落套餐备胎（快速模型），按量段留给套餐整体故障
+      target = { provider: "<your-provider>", model: "<your-fast-model>", thinking: "low", warn: false };
     }
 
     const m = ctx.modelRegistry.find(target.provider, target.model);
@@ -418,7 +418,7 @@ export default function (pi: ExtensionAPI) {
     // 冻结主路由 15 分钟（等效用户接管）：防止主路由在免税窗口下立刻把模型切回刚故障的目标，
     // 形成切换振荡；failover 自身不受此锁限制（flash 也挂时仍推进到层级2）
     manualLockUntil = Date.now() + MANUAL_LOCK_MS;
-    // 进入非路由表模型（deepseek）后主路由自动让位（routerModelOf 返回 null）
+    // 进入非路由表模型（<your-fallback-provider>）后主路由自动让位（routerModelOf 返回 null）
     initialized = false;
     lastModelId = null;
     if (target.warn) {
@@ -439,7 +439,7 @@ export default function (pi: ExtensionAPI) {
     if (!initialized) {
       initialized = true;
       lastModelId = routerModelOf(ctx);
-      if (!lastModelId) return; // 当前模型不在路由表（deepseek/4.6v/highspeed 等），静默跳过
+      if (!lastModelId) return; // 当前模型不在路由表（其它 provider 的模型），静默跳过
     }
     const current = lastModelId;
     if (!current) return;
@@ -481,7 +481,7 @@ export default function (pi: ExtensionAPI) {
     // 收尾信号且无强开发信号 → 直接视为降级请求
     const [, closingOnly] = [tier, closing && tier <= 1];
 
-    // ---- 跨组：升级（flash → 5.3，重税方向）----
+    // ---- 跨组：升级（快速 → 高端，重税方向）----
     if (GROUP[target] > GROUP[current]) {
       const taxFree = freeSwitchWindow || ctxTokens < SMALL_CTX_FREE;
       if (taxFree || ctxTokens < UPGRADE_CTX_LIMIT) {
@@ -504,7 +504,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // ---- 跨组：降级（5.3 → flash，轻税方向）----
+    // ---- 跨组：降级（高端 → 快速，轻税方向）----
     if (GROUP[target] < GROUP[current]) {
       // 防振荡：刚升级不久且非明确收尾 → 不降
       if (Date.now() - lastSwitchAt < SWITCH_COOLDOWN_MS && lastSwitchDir === "up" && !closingOnly) return;

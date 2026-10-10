@@ -11,14 +11,14 @@
  * 语义别名（供 AGENTS.md 的模型选择策略使用，按需改这里）：
  *   planning / plan / high  → <your-provider>/<your-high-end-model>        （规划、设计、复杂判断）
  *   execute / exec / fast   → <your-provider>/<your-fast-model>  （开发、编码、部署落地）
- *   ds-flash                → <your-fallback-provider>/<your-fallback-model>
+ *   fallback-flash                → <your-fallback-provider>/<your-fallback-model>
  *
  * 行为边界：
  *   - 等价于 /model：只改当前会话，不写 settings.json 的 defaultModel
  *   - 同 provider 切换：立即生效，本轮的后续调用由新模型执行
  *   - 跨 provider 切换：目标模型未标 reasoning:true 时排定到本轮结束后生效。pi 在跨模型时会剥离
- *     reasoning_content，而部分端点（实测 DeepSeek）强制要求回传，同一轮内切会直接 400；
- *     同 provider（如 glm 系）端点宽容接受；目标标了 reasoning:true 时 pi 会以空占位回传（实测可通过），
+ *     reasoning_content，而部分端点（实测按量 provider）强制要求回传，同一轮内切会直接 400；
+ *     同 provider 端点宽容接受；目标标了 reasoning:true 时 pi 会以空占位回传（实测可通过），
  *     同样允许同轮生效。排定后若再切回当前模型，视为取消排定
  *   - 目标 provider 未配置凭据时拒绝切换，工具报错并保留原模型
  *   - 缓存重计费警告：从 prompt cache 仍热的模型切走时（手动 /model、Ctrl+P、本工具、排定落定均覆盖），
@@ -36,12 +36,12 @@ type Level = (typeof THINKING_LEVELS)[number];
 
 /** 语义别名：小写键名 → 目标模型（provider/id）与预设思考等级
  *
- * v3 路由（2026-10-06）：GLM 三模型走 Coding Plan 套餐（积分制，边际≈0），
- * DeepSeek 按量计费（真钱）仅作特例出口。难度调节优先 effort/thinking（零缓存代价），
+ * v3 路由（2026-10-06）：套餐内模型走订阅积分（边际≈0），
+ * 按量付费模型仅作特例出口。难度调节优先 effort/thinking（零缓存代价），
  * 模型切换只在阶段边界发生（切换税 = 全上下文按 cache-miss 重算）。
  */
 const ALIASES: Record<string, { target: string; thinking?: Level }> = {
-	// 主路由（套餐内）
+	// 主路由（订阅套餐内）
 	planning: { target: "<your-provider>/<your-high-end-model>", thinking: "high" },      // 复杂：规划/架构/疑难分析
 	plan: { target: "<your-provider>/<your-high-end-model>", thinking: "high" },
 	execute: { target: "<your-provider>/<your-fast-model>", thinking: "low" },  // 简单：编码/部署/批量/短问答
@@ -49,10 +49,10 @@ const ALIASES: Record<string, { target: string; thinking?: Level }> = {
 	fast: { target: "<your-provider>/<your-fast-model>", thinking: "low" },
 	simple: { target: "<your-provider>/<your-fast-model>", thinking: "low" },
 	hard: { target: "<your-provider>/<your-fast-model>", thinking: "max" },     // 同模型内升难度（零缓存税）
-	vision: { target: "<your-provider>/<your-fast-model>" },                    // 视觉（5.3-flash 常开；若启用 4.6v 后可改指 zai-coding-cn/<your-vision-model>，指向禁用模型会触发自检报警）
-	// 特例出口（按量真钱）
-	"ds-flash": { target: "<your-fallback-provider>/<your-fallback-model>", thinking: "off" },   // 点名/配额溢出/超长上下文
-	"ds-pro": { target: "<your-fallback-provider>/<your-reasoning-model>", thinking: "high" },   // <20k 上下文硬推理
+	vision: { target: "<your-provider>/<your-fast-model>" },                    // 视觉模型（可选）
+	// 特例出口（按量计费）
+	"fallback-flash": { target: "<your-fallback-provider>/<your-fallback-model>", thinking: "off" },   // 点名/配额溢出/超长上下文
+	"fallback-pro": { target: "<your-fallback-provider>/<your-reasoning-model>", thinking: "high" },   // <20k 上下文硬推理
 };
 
 type Pending = {
@@ -170,9 +170,9 @@ function reasonSuffix(reason: string | undefined): string {
 const CACHE_STATUS_KEY = "[REDACTED]";
 
 /** 模型 promptCache 元数据的 TTL（秒，short/long 档），缺省 300s；PI_CACHE_RETENTION=long 时用长档
- *  DeepSeek 官方口径为「闲置几小时到几天」自动清空（实测闲置 44 分钟仍可命中），
- *  300s 会漏报重计费警告，故按 provider 覆盖。 */
-const TTL_OVERRIDE_S: Record<string, number> = { deepseek: 3 * 3600 };
+ *  部分 provider 缓存实际保留数小时（远长于 300s），
+ *  故按 provider 覆盖。 */
+const TTL_OVERRIDE_S: Record<string, number> = { "<your-fallback-provider>": 3 * 3600 };
 
 function cacheTtlMs(model: Model<any>): number {
 	if (TTL_OVERRIDE_S[model.provider]) return TTL_OVERRIDE_S[model.provider] * 1000;
@@ -219,8 +219,8 @@ function cacheSwitchWarning(ctx: ExtensionContext, from: Model<any>, to: Model<a
 	return `下一条请求将在 ${label(to)} 上全量重计费 ~${Math.round(tokens / 1000)}k tokens${costText}`;
 }
 
-/** 套餐 provider：cost 仅为记账口径，实际走 Coding Plan 积分（边际现金≈0） */
-const PLAN_PROVIDERS = new Set(["zai-coding-cn"]);
+/** 套餐 provider：cost 仅为记账口径，实际走订阅积分（边际现金≈0） */
+const PLAN_PROVIDERS = new Set(["<your-provider>"]);
 
 function priceText(model: Model<any>): string {
 	const plan = PLAN_PROVIDERS.has(model.provider) ? " · 套餐" : " · 按量";
@@ -383,12 +383,12 @@ export default function (pi: ExtensionAPI) {
 		name: "switch_model",
 		label: "Switch Model",
 		description:
-			"查看或切换当前会话模型与思考等级。路由原则：难度优先用 thinking/effort 调节（零缓存代价）；换模型只在阶段边界发生（切换 = 全上下文按 cache-miss 价重算）。GLM 系走套餐，DeepSeek 按量付费（特例出口）。",
-		promptSnippet: "查看或切换当前会话模型（语义别名：planning / execute / hard / vision / ds-flash / ds-pro）",
+			"查看或切换当前会话模型与思考等级。路由原则：难度优先用 thinking/effort 调节（零缓存代价）；换模型只在阶段边界发生（切换 = 全上下文按 cache-miss 价重算）。套餐内模型走订阅，按量模型作为特例出口。",
+		promptSnippet: "查看或切换当前会话模型（语义别名：planning / execute / hard / vision / fallback-flash / fallback-pro）",
 		promptGuidelines: [
 			"模型路由（阶段级，低频）：默认 execute（<your-fast-model>，套餐）；规划/架构/疑难分析用 planning（<your-high-end-model>，套餐）；视觉输入用 vision（<your-vision-model>，套餐）。只在阶段边界切换，阶段内不换模型；拿不准算复杂、拿不准留在当前模型；复杂度只在阶段开始判断一次，中途不降级。",
-			"难度调节优先用 thinking/effort 而非换模型（effort 切换不损失缓存）：机械任务 low、常规任务默认、卡壳时临时升 high/max（别名 hard = flash+max）。同一模型连续 2 次尝试失败才考虑升级模型。",
-			"DeepSeek 为按量付费特例出口（全量重算 ¥1~9/M、输出 ¥8~27/M，CNY 分时计费）：仅当用户点名、GLM 周配额余量 <20%（/glm-quota 查看）、或 <20k 上下文硬推理难题（ds-pro）时使用。短上下文（<10k）切换代价可忽略，可灵活。",
+			"难度调节优先用 thinking/effort 而非换模型（effort 切换不损失缓存）：机械任务 low、常规任务默认、卡壳时临时升 high/max（别名 hard = 快速模型 + max）。同一模型连续 2 次尝试失败才考虑升级模型。",
+			"按量付费模型为特例出口：仅当用户点名、套餐周配额余量 <20%（/glm-quota 查看）、或 <20k 上下文硬推理难题（fallback-pro）时使用。短上下文（<10k）切换代价可忽略，可灵活。",
 			"Use switch_model with action=\"list\" to see the current model, aliases, per-model prices, and session switch stats.",
 		],
 		parameters: Type.Object({
@@ -400,7 +400,7 @@ export default function (pi: ExtensionAPI) {
 			model: Type.Optional(
 				Type.String({
 					description:
-						'目标模型：语义别名（planning / execute / fast）、provider/id（如 <your-provider>/<your-fast-model>）、裸 id 或唯一关键字',
+						'目标模型：语义别名（planning / execute / fast）、provider/id（如 vendor/model-x）、裸 id 或唯一关键字',
 				}),
 			),
 			thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "切换后的思考等级，缺省用别名的预设值" })),
