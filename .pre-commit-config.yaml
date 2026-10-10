@@ -1,11 +1,14 @@
 # 提交前密钥扫描（gitleaks）
 #
-# 启用方式：
-#   pip install pre-commit && pre-commit install
-# 手动全量扫描：
-#   pre-commit run --all-files
+# 依赖：gitleaks 需已安装并在 PATH
+#   本机安装位置：%LOCALAPPDATA%\Python\bin\gitleaks.exe
+# 启用：pre-commit install
+# 手动全量扫描：pre-commit run --all-files   （或直接 gitleaks git --redact -v）
 repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.1
+  - repo: local
     hooks:
       - id: gitleaks
+        name: gitleaks（密钥扫描）
+        entry: gitleaks git --pre-commit --redact --staged --verbose
+        language: system
+        pass_filenames: false
