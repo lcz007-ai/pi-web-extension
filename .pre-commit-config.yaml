@@ -1,0 +1,11 @@
+# 提交前密钥扫描（gitleaks）
+#
+# 启用方式：
+#   pip install pre-commit && pre-commit install
+# 手动全量扫描：
+#   pre-commit run --all-files
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

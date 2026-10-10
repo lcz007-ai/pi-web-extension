@@ -1,0 +1,12 @@
+# gitleaks 配置：在默认规则集基础上扩展
+#
+# 本地扫描：gitleaks detect -v
+# 仅扫描暂存变更：gitleaks protect --staged
+[extend]
+useDefault = true
+
+# 本仓库为模板性质，源码中含 <your-provider> / <your-fast-model> 等占位符，
+# 这些不是真实凭据；如默认规则误报，可在此追加 allowlist。
+[[allowlists]]
+description = "本项目占位符"
+regexes = ['<your-[a-z-]+>']
